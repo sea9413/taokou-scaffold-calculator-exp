@@ -307,7 +307,7 @@ function parseInput(text) {
     let hit = false;
 
     // 立杆 / 横杆 / 顶托：米数可选（「横杆0.6」或「横杆0.55米」都能识别）
-    const typeMatch = line.match(/(立杆|横杆|顶托|螺丝头|拉杆|LG|HG|L|H)/i);
+    const typeMatch = line.match(/(立杆|横杆|斜拉杆|顶托|上托|螺丝头|拉杆|LG|HG|L|H)/i);
     if (typeMatch) {
       const rawType = typeMatch[1];
       let typeName;
@@ -316,7 +316,7 @@ function parseInput(text) {
       else if (upper === 'H') typeName = '横杆';
       else if (upper === 'LG') typeName = '立杆';
       else if (upper === 'HG') typeName = '横杆';
-      else if (rawType === '顶托' || rawType === '螺丝头') typeName = '顶托';
+      else if (rawType === '顶托' || rawType === '上托' || rawType === '螺丝头') typeName = '顶托';
       else if (rawType === '拉杆') typeName = '横杆';
       else typeName = rawType;
       // 提取米数：数字 + 可选的(米|m|M)
@@ -358,11 +358,14 @@ function parseInput(text) {
             const isBundle = /(扎|捆|件|吊)/.test(line) && part.bundle;
             const bundleQty = isBundle ? qty : undefined;
             if (isBundle) qty = qty * part.bundle;
+            // autoBundle: 非扎捆单位时，反推捆数
+            const autoBundle = !isBundle && part.bundle && qty > 0 ? +(qty / part.bundle).toFixed(1) : undefined;
             if (matched[part.code]) {
               matched[part.code].qty += qty;
-              if (bundleQty !== undefined) matched[part.code].bundleQty = (matched[part.code].bundleQty || 0) + bundleQty;
+              if (bundleQty !==undefined) matched[part.code].bundleQty = (matched[part.code].bundleQty || 0) + bundleQty;
+              else if (autoBundle!==undefined) matched[part.code].bundleQty = (matched[part.code].bundleQty || 0) + autoBundle;
             } else {
-              matched[part.code] = { part, qty, bundleQty };
+              matched[part.code] = { part, qty, bundleQty, autoBundle };
             }
             hit = true;
             continue;
@@ -402,13 +405,13 @@ function parseInput(text) {
     if (hit) continue;
 
     // 2.5立杆 / 2.5LG / 0.9横杆 / 1.71斜拉杆（数字在前，类型在后）
-    const numFirstMatch = line.match(/(\d+(?:\.\d+)?)\s*(立杆|横杆|顶托|螺丝头|LG|HG)/i);
+    const numFirstMatch = line.match(/(\d+(?:\.\d+)?)\s*(立杆|横杆|顶托|上托|螺丝头|LG|HG)/i);
     if (numFirstMatch) {
       const num = numFirstMatch[1];
       const rawType = numFirstMatch[2];
       let typeName;
       if (rawType === '横杆') typeName = '横杆';
-      else if (rawType === '顶托' || rawType === '螺丝头') typeName = '顶托';
+      else if (rawType === '顶托' || rawType === '上托' || rawType === '螺丝头') typeName = '顶托';
       else if (rawType === 'LG' || rawType === '立杆') typeName = '立杆';
       else if (rawType === 'HG') typeName = '横杆';
       else typeName = rawType;
