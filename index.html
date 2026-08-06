@@ -128,14 +128,15 @@
 
   .warn {
     font-size: 13px;
-    color: #856404;
-    background: #fff3cd;
-    border-left: 3px solid #ffc107;
+    color: #842029;
+    background: #f8d7da;
+    border-left: 3px solid #dc3545;
     padding: 8px 10px;
     margin-bottom: 12px;
     border-radius: 0 4px 4px 0;
+    white-space: pre-line;
   }
-  .warn b { color: #664d03; }
+  .warn b { color: #842029; }
 
   table {
     width: 100%;
@@ -197,6 +198,31 @@
     padding: 20px;
     font-size: 14px;
   }
+
+  /* 快捷操作区 */
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 4px; }
+  .toolbar select, .toolbar input {
+    padding: 7px 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: inherit; background: #fff; max-width: 200px;
+  }
+  .toolbar input.proj-name { flex: 1; min-width: 120px; }
+  .toolbar .btn-mini {
+    padding: 7px 12px; border: 1px solid #d0d4da; background: #f0f1f3; color: #444; border-radius: 6px; font-size: 13px; cursor: pointer; white-space: nowrap;
+  }
+  .toolbar .btn-mini:hover { background: #e5e7eb; }
+
+  .action-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .action-row .btn-action {
+    flex: 1; min-width: 90px; padding: 9px 8px; border: 1px solid #d0d4da; background: #fff; color: #333; border-radius: 6px; font-size: 13px; cursor: pointer; text-align: center;
+  }
+  .action-row .btn-action:hover { background: #f0f1f3; border-color: #3b82f6; color: #2563eb; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%);
+    background: rgba(0,0,0,0.82); color: #fff; padding: 10px 18px; border-radius: 20px; font-size: 14px; z-index: 9999; opacity: 0; transition: opacity .25s; pointer-events: none; white-space: nowrap;
+  }
+  .toast.show { opacity: 1; }
+
+  .exp-badge { display: inline-block; background: #f59e0b; color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
 
   @media (max-width: 480px) {
     body { padding: 10px; }
@@ -267,6 +293,12 @@
         <div class="total-ton" id="total-ton">0.000 吨</div>
         <div class="total-value" id="total-kg">= 0.000 kg</div>
       </div>
+
+      <div class="action-row">
+        <button class="btn-action" id="btn-copy">📋 复制清单</button>
+        <button class="btn-action" id="btn-excel">📊 导出Excel</button>
+        <button class="btn-action" id="btn-img">🖼️ 存为图片</button>
+      </div>
     </div>
 
     <div class="hint" id="hint">支持自然语言整句。格式示例：
@@ -276,6 +308,22 @@
 · 立杆2.5 15扎 / 横杆0.9 20捆（打包单位自动换算）
 · 简称：LG/HG/XLG、L/H/X 前缀（均不区分大小写）
 扎/捆/件/吊 = 打包单位，自动乘以每捆支数。</div>
+  </div>
+
+  <!-- 快捷操作：模板 + 项目 -->
+  <div class="card">
+    <label class="label">常用模板 / 项目存档</label>
+    <div class="toolbar">
+      <select id="tmpl-select"><option value="">📋 选择模板…</option></select>
+      <button class="btn-mini" id="btn-tmpl">填入</button>
+    </div>
+    <div class="toolbar" style="margin-top:8px;">
+      <input class="proj-name" id="proj-name" placeholder="给当前清单起个名，如：A区3层">
+      <button class="btn-mini" id="btn-save">💾 保存</button>
+      <select id="proj-select"><option value="">📂 已存项目…</option></select>
+      <button class="btn-mini" id="btn-load">加载</button>
+      <button class="btn-mini" id="btn-del">删除</button>
+    </div>
   </div>
 
   <!-- 备注区 -->
@@ -294,7 +342,7 @@
 <script>
 // ============ 版本检查（自动检测更新）============
 document.addEventListener('DOMContentLoaded', function(){
-  var VER = '2026-08-06-merged-v1';
+  var VER = '2026-08-07-optimized-v1';
   try {
     var lastVer = localStorage.getItem('app_ver');
     if (lastVer && lastVer !== VER) {
@@ -310,6 +358,17 @@ document.addEventListener('DOMContentLoaded', function(){
   } catch(e) { /* localStorage 不可用时静默跳过 */ }
   var fv = document.getElementById('footer-ver');
   if (fv) fv.textContent = VER;
+  try {
+    var params = new URLSearchParams(location.search);
+    if (params.get('exp') === '1') {
+      var badge = document.createElement('span');
+      badge.className = 'exp-badge';
+      badge.textContent = '试验功能';
+      var sub = document.getElementById('subtitle');
+      if (sub) sub.appendChild(badge);
+      window.EXPERIMENTAL = true;
+    }
+  } catch(e) {}
 });
 
 // ============ 全局模式 ============
@@ -1061,14 +1120,38 @@ function renderResult(matched, unmatched) {
     });
   }
 
-  // 警告
+  // 警告：未识别 + 异常数量
   const warn = document.getElementById('warn');
+  let warnHtml = '';
   if (unmatched.length > 0) {
+    warnHtml += '<b>⚠️ 以下内容没识别出来，已跳过：</b>\n' + unmatched.join('、');
+  }
+  const abnormal = [];
+  Object.keys(matched).forEach(function(code) {
+    const m = matched[code];
+    const part = m.part;
+    let lineKg;
+    if (isSpecialBundle(part) && m.bundleQty !== undefined) {
+      lineKg = m.bundleQty * part.extra.packWeight;
+    } else {
+      const bundle = part.bundle || 1;
+      const hasBundle = m.bundleQty !== undefined || m.autoBundle !== undefined;
+      const qty = hasBundle ? (m.bundleQty !== undefined ? m.bundleQty * bundle : m.qty) : m.qty;
+      lineKg = qty * part.weight;
+    }
+    if (lineKg > ABNORMAL_KG) abnormal.push(part.code + '≈' + fmt(lineKg / 1000) + '吨');
+  });
+  if (abnormal.length > 0) {
+    if (warnHtml) warnHtml += '\n\n';
+    warnHtml += '<b>⚠️ 数量异常偏大，请确认是否多输了0：</b>\n' + abnormal.join('、');
+  }
+  if (warnHtml) {
     warn.style.display = 'block';
-    warn.innerHTML = '<b>以下内容没识别出来，已跳过：</b>' + unmatched.join('、');
+    warn.innerHTML = warnHtml;
   } else {
     warn.style.display = 'none';
   }
+  LAST_RESULT = { matched: matched, unmatched: unmatched, mode: CURRENT_MODE };
 
   // 合计
   updateTotal();
@@ -1133,6 +1216,220 @@ function updateTotal() {
   });
   document.getElementById('total-ton').textContent = fmt(total / 1000) + ' 吨';
   document.getElementById('total-kg').textContent = '= ' + fmt(total) + ' kg';
+  LAST_TOTAL_KG = total;
+}
+
+// ============ 上次计算结果（用于复制/导出/图片）============
+var LAST_RESULT = null;   // { matched, unmatched, mode }
+var LAST_TOTAL_KG = 0;
+// 单条重量超过此值（kg）提示确认，防止多输 0
+var ABNORMAL_KG = 300000;
+
+// ============ 常用模板 ============
+var TEMPLATES = [
+  { name: '盘扣-标准层', mode: 'pankou', text: '立杆2.5米100支\n横杆0.9 200支\n斜拉杆1.71 50支\n顶托50支\n底座30套' },
+  { name: '盘扣-基础层', mode: 'pankou', text: '立杆1米100支\n横杆0.6 200支\n斜拉杆1.61 50支\n顶托40支' },
+  { name: '套扣-标准层', mode: 'taokou', text: '立杆1米100支\n横杆0.6 200支\n顶托50支' },
+  { name: '套扣-基础层', mode: 'taokou', text: '立杆0.4米100支\n横杆0.525 200支\n顶托40支' },
+];
+
+function initTemplates() {
+  var sel = document.getElementById('tmpl-select');
+  TEMPLATES.forEach(function(t, i) {
+    var o = document.createElement('option');
+    o.value = String(i); o.textContent = t.name;
+    sel.appendChild(o);
+  });
+}
+
+function applyTemplate() {
+  var sel = document.getElementById('tmpl-select');
+  var idx = sel.value;
+  if (idx === '') return;
+  var t = TEMPLATES[parseInt(idx, 10)];
+  if (!t) return;
+  if (document.getElementById('input').value.trim() && !confirm('会覆盖当前输入内容，确定填入模板？')) {
+    sel.value = '';
+    return;
+  }
+  switchMode(t.mode);
+  document.getElementById('input').value = t.text;
+  sel.value = '';
+}
+
+// ============ 项目存档（localStorage）============
+var PROJ_KEY = 'scaffold_projects';
+function loadProjects() {
+  try { return JSON.parse(localStorage.getItem(PROJ_KEY) || '{}'); }
+  catch(e) { return {}; }
+}
+function saveProjects(obj) {
+  try { localStorage.setItem(PROJ_KEY, JSON.stringify(obj)); } catch(e) {}
+}
+function refreshProjectList() {
+  var sel = document.getElementById('proj-select');
+  var cur = sel.value;
+  sel.innerHTML = '<option value="">📂 已存项目…</option>';
+  var proj = loadProjects();
+  Object.keys(proj).sort().forEach(function(name) {
+    var o = document.createElement('option');
+    o.value = name; o.textContent = name;
+    sel.appendChild(o);
+  });
+  if (cur) sel.value = cur;
+}
+function saveProject() {
+  var name = document.getElementById('proj-name').value.trim();
+  if (!name) { showToast('请先输入项目名'); return; }
+  var proj = loadProjects();
+  proj[name] = {
+    text: document.getElementById('input').value,
+    mode: CURRENT_MODE,
+    remark: document.getElementById('remark').value,
+    ts: Date.now()
+  };
+  saveProjects(proj);
+  refreshProjectList();
+  document.getElementById('proj-select').value = name;
+  showToast('已保存：' + name);
+}
+function loadProject() {
+  var name = document.getElementById('proj-select').value;
+  if (!name) { showToast('请选择要加载的项目'); return; }
+  var proj = loadProjects();
+  if (!proj[name]) { showToast('项目不存在'); return; }
+  var p = proj[name];
+  if (p.mode) switchMode(p.mode);
+  document.getElementById('input').value = p.text || '';
+  document.getElementById('remark').value = p.remark || '';
+  showToast('已加载：' + name);
+}
+function deleteProject() {
+  var name = document.getElementById('proj-select').value;
+  if (!name) { showToast('请选择要删除的项目'); return; }
+  var proj = loadProjects();
+  delete proj[name];
+  saveProjects(proj);
+  refreshProjectList();
+  showToast('已删除：' + name);
+}
+
+// ============ 复制清单 / 导出Excel / 存为图片 ============
+function buildRows() {
+  if (!LAST_RESULT) return [];
+  var rows = [];
+  Object.keys(LAST_RESULT.matched).forEach(function(code) {
+    var m = LAST_RESULT.matched[code];
+    var part = m.part;
+    var bundle = part.bundle || 1;
+    var hasBundle = m.bundleQty !== undefined || m.autoBundle !== undefined;
+    var qty = hasBundle ? (m.bundleQty !== undefined ? m.bundleQty * bundle : m.qty) : m.qty;
+    var subtotal = qty * part.weight / 1000;
+    if (isSpecialBundle(part) && m.bundleQty !== undefined) {
+      subtotal = m.bundleQty * part.extra.packWeight / 1000;
+    }
+    rows.push({ type: part.type, code: part.code,
+      bundle: hasBundle ? (m.bundleQty !== undefined ? m.bundleQty : m.autoBundle) : '-',
+      per: part.bundle ? bundle : '-', qty: qty, subtotal: subtotal });
+  });
+  return rows;
+}
+
+function copyList() {
+  var rows = buildRows();
+  if (rows.length === 0) { showToast('还没有计算结果'); return; }
+  var lines = [];
+  lines.push((LAST_RESULT.mode === 'taokou' ? '【套扣】' : '【盘扣】') + '脚手架重量清单');
+  lines.push('类型\t规格\t捆数\t每捆\t数量\t小计(吨)');
+  rows.forEach(function(r) {
+    lines.push([r.type, r.code, r.bundle, r.per, r.qty + '支', r.subtotal].join('\t'));
+  });
+  lines.push('总重量：' + fmt(LAST_TOTAL_KG / 1000) + ' 吨 (' + fmt(LAST_TOTAL_KG) + ' kg)');
+  var text = lines.join('\n');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function(){ showToast('清单已复制'); }, function(){ fallbackCopy(text); });
+  } else { fallbackCopy(text); }
+}
+function fallbackCopy(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text; document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); showToast('清单已复制'); }
+  catch(e) { showToast('复制失败，请手动选择'); }
+  document.body.removeChild(ta);
+}
+
+function exportExcel() {
+  var rows = buildRows();
+  if (rows.length === 0) { showToast('还没有计算结果'); return; }
+  var lines = [];
+  lines.push('类型,规格型号,捆数,每捆支数,数量,小计(吨)');
+  rows.forEach(function(r) {
+    lines.push([r.type, r.code, r.bundle, r.per, r.qty + '支', r.subtotal].join(','));
+  });
+  lines.push('总重量,,,,, ' + fmt(LAST_TOTAL_KG / 1000) + ' 吨');
+  var csv = '﻿' + lines.join('\r\n');
+  var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = (LAST_RESULT.mode === 'taokou' ? '套扣' : '盘扣') + '重量清单.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('已导出 Excel');
+}
+
+function saveImage() {
+  var rows = buildRows();
+  if (rows.length === 0) { showToast('还没有计算结果'); return; }
+  var dpr = 2;
+  var W = 520, rowH = 28, pad = 16, headH = 72;
+  var H = headH + rows.length * rowH + 50;
+  var cv = document.createElement('canvas');
+  cv.width = W * dpr; cv.height = H * dpr;
+  var ctx = cv.getContext('2d');
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#3b82f6'; ctx.fillRect(0, 0, W, headH);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText((LAST_RESULT.mode === 'taokou' ? '套扣' : '盘扣') + '脚手架重量清单', pad, 30);
+  ctx.font = '14px sans-serif';
+  ctx.fillText('总重量：' + fmt(LAST_TOTAL_KG / 1000) + ' 吨', pad, 54);
+  ctx.fillStyle = '#333';
+  ctx.font = '12px sans-serif';
+  var headers = ['类型','规格','捆数','数量','小计(吨)'];
+  var xs = [pad, 90, 200, 270, 400];
+  headers.forEach(function(h, i){ ctx.fillText(h, xs[i], headH + 16); });
+  ctx.strokeStyle = '#eee';
+  rows.forEach(function(r, i) {
+    var y = headH + 16 + (i + 1) * rowH;
+    ctx.fillText(String(r.type), xs[0], y);
+    ctx.fillText(String(r.code), xs[1], y);
+    ctx.fillText(String(r.bundle), xs[2], y);
+    ctx.fillText(String(r.qty) + '支', xs[3], y);
+    ctx.fillText(String(r.subtotal), xs[4], y);
+    ctx.beginPath(); ctx.moveTo(pad, y + 6); ctx.lineTo(W - pad, y + 6); ctx.stroke();
+  });
+  cv.toBlob(function(blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = (LAST_RESULT.mode === 'taokou' ? '套扣' : '盘扣') + '重量清单.png';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('图片已保存');
+  });
+}
+
+// ============ toast 提示 ============
+var toastTimer = null;
+function showToast(msg) {
+  var t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div'); t.id = 'toast'; t.className = 'toast';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg; t.classList.add('show');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.classList.remove('show'); }, 1800);
 }
 
 // ============ 模式文本 ============
@@ -1190,6 +1487,23 @@ function switchMode(mode) {
 
 document.getElementById('tab-pankou').addEventListener('click', () => switchMode('pankou'));
 document.getElementById('tab-taokou').addEventListener('click', () => switchMode('taokou'));
+
+// ============ 新增功能事件绑定 ============
+document.getElementById('btn-copy').addEventListener('click', copyList);
+document.getElementById('btn-excel').addEventListener('click', exportExcel);
+document.getElementById('btn-img').addEventListener('click', saveImage);
+document.getElementById('btn-tmpl').addEventListener('click', applyTemplate);
+document.getElementById('btn-save').addEventListener('click', saveProject);
+document.getElementById('btn-load').addEventListener('click', loadProject);
+document.getElementById('btn-del').addEventListener('click', deleteProject);
+initTemplates();
+refreshProjectList();
+
+document.getElementById('tmpl-select').addEventListener('change', applyTemplate);
+
+document.getElementById('proj-select').addEventListener('change', function(){
+  if (this.value) loadProject();
+});
 
 </script>
 </body>
